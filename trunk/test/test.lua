@@ -44,7 +44,7 @@ do
           a, b = b, a
         end)))
       end},
-      --[[
+      -- [[
       {"Constants", function()
         local t = {"local x"}
         for i = 2, 2^18 + 2 do
@@ -230,6 +230,14 @@ do
           move 3 1
           return 0 5
         ]]))
+      end},
+      {"Runnable code", function()
+        assertEqual("Hello World", load(asm.assemble[[
+          .k k "Hello World"
+          .r r 0
+          loadk r k
+          return 0 2
+        ]])())
       end},
     },
     {"Identification of malformed bytecode",
@@ -424,6 +432,13 @@ local testenv = setmetatable({
     failmsg = err
     assert(err == "verification failed")
     failmsg = nil
+  end,
+  assertEqual = function(expected, actual)
+    num_asserts = num_asserts + 1
+    if expected ~= actual then
+      failmsg = "Expected " .. tostring(expected) .. ", got " .. tostring(actual)
+      error(failmsg)
+    end
   end,
 }, {__index = _G})
 
