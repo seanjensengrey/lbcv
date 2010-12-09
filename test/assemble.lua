@@ -44,21 +44,42 @@ end
 local opcode_modes = {LOADK = "ABx", JMP = "AsBx", FORLOOP = "AsBx",
   FORPREP = "AsBx", TFORLOOP = "AsBx", CLOSURE = "ABx", EXTRAARG = "Ax"}
 
--- Convert an unsigned integer number into a string of length 4 whose bytes
--- represent the number in little endian format.
-local function ub4(n)
-  local b0 = n % 0x100
-  n = (n - b0) / 0x100
-  local b1 = n % 0x100
-  n = (n - b1) / 0x100
-  local b2 = n % 0x100
-  n = (n - b2) / 0x100
-  local b3 = n % 0x100
-  n = (n - b3) / 0x100
-  return string.char(b0, b1, b2, b3)
+--[[ Helper function to construct a function which packs integer values into a
+ string.
+ @param nbytes The number of bytes which the resulting function will pack
+               integers into.
+ @param endian The endianness to pack integers as; either "big" or "little".
+ @return A function which accepts a positive integer and returns a string whose
+         bytes represent the integer. ]]
+local function make_ub(nbytes, endian)
+  assert(nbytes >= 0)
+  assert(endian == "little" or endian == "big")
+  --[[ Construct a function like:
+    function(n)
+      local b1 = n % 0x100; n = (n - b1) / 0x100;
+      local b2 = n % 0x100; n = (n - b2) / 0x100;
+      return string.char(b1, b2)
+    end ]]
+  local code = "return function(n)"
+  for i = 1, nbytes do
+    code = code .. ("local b%i = n %% 0x100; n = (n - b%i) / 0x100; "):format(i, i)
+  end
+  code = code .. "return string.char("
+  local init, limit, step = 1, nbytes, 1
+  if endian == "big" then
+    init, limit, step = limit, init, -step
+  end
+  for i = init, limit, step do
+    if i ~= init then
+      code = code .. ", "
+    end
+    code = code .. "b" .. i
+  end
+  code = code .. ") end"
+  return assert(loadstring(code))()
 end
 
---[[ Assemble plaintext into Lua 5.2 bytecode.
+--[==[ Assemble plaintext into Lua 5.2 bytecode.
 
 The format of accepted code is:
 code ::= line {[\r\n]+ line}
@@ -70,7 +91,7 @@ directive ::= .(constant|k) Name Expression |
               .(params|args) Number |
               .r[eg] Name Number |
               .up[value] Name
-instruction ::= {label} opcode [operand] [operand] [operand]
+instruction ::= {label} opcode [operand [operand [operand]]]
 label ::= Name:
 opcode ::= move | loadk | loadbool  | ... | vararg | extraarg
 operand ::= Name | Number
@@ -117,7 +138,7 @@ Labels are of the form "Name:", and assign a name to the next instruction. This
 name can then be used anywhere in the current prototype to mean the offset
 between the instruction it is used in, and the instruction it labels.
 
-]]
+]==]
 local function assemble(code)
   ----- Parse text into structures -----
   local constants = {} -- Map of constant name to constant value
@@ -203,12 +224,15 @@ local function assemble(code)
       local op = ins.op
       for i, arg in pairs(ins) do
         if i ~= "op" and type(arg) ~= "number" then
+          -- Simple name -> number replacements
           if proto.regs[arg] then
             arg = proto.regs[arg]
-          elseif proto.labels[arg] then
-            arg = proto.labels[arg] - pc
           elseif proto.upvalues[arg] then
             arg = proto.upvalues[arg]
+          -- Name -> number replacement with PC offset
+          elseif proto.labels[arg] then
+            arg = proto.labels[arg] - pc
+          -- Name -> cached table index replacements
           elseif prototypes[arg] then
             if not usedprototypes[arg] then
               usedprototypes[arg] = #proto.prototypes
@@ -230,8 +254,8 @@ local function assemble(code)
               -- RK fields, so they need an offset to make them K rather than R
               arg = arg + 256
             end
+          -- Ommitted operands are treated as zero
           elseif arg == "" then
-            -- Ommitted operands are treated as zero
             arg = 0
           else
             error("Unable to resolve symbol '" .. arg .. "'")
@@ -243,17 +267,72 @@ local function assemble(code)
   end
   
   ----- Compile (spit out bytecode) -----
+  local header = string.dump(function()end)
+  local endian = header:byte(7) == 0 and "big" or "little"
+  local sizeof_int = header:byte(8)
+  local sizeof_sizet = header:byte(9)
+  local sizeof_instruction = header:byte(10)
+  header = nil -- Is no longer used
   local yield = coroutine.yield
+  local ub_int = make_ub(sizeof_int, endian)
+  local function int(value) -- Helper to write an int
+    yield(ub_int(value))
+  end
+  local ub_instruction = make_ub(sizeof_instruction, endian)
+  local function instruction(value) -- Helper to write an instruction
+    yield(ub_instruction(value))
+  end
+  local ub_sizet = make_ub(sizeof_sizet, endian)
+  local function str(s) -- Helper to write a string
+    if s then
+      yield(ub_sizet(#s + 1))
+      yield(s)
+      yield "\0"
+    else
+      yield(ub_sizet(0))
+    end
+  end
+  local ub4 = make_ub(4, endian)
+  local function num(n) -- Helper to write an IEEE754 double-precision float
+    local sign = 0
+    -- Ensure that n is strictly positive
+    if n == 0 then
+      yield "\0\0\0\0\0\0\0\0"
+      return
+    elseif n < 0 then
+      sign = 1
+      n = -n
+    end
+    -- Split into mantissa and exponent
+    local m, e = math.frexp(n)
+    m = (m - 0.5) * 2^53 -- Discard most significant bit, make into integer
+    e = e + 1022 -- Apply exponent bias, and offset by 1 for removing MSB
+    local lowm = m % 2^32
+    m = (m - lowm) / 2^32
+    local low = ub4(lowm)
+    local high = ub4(sign * 2^31 + e * 2^20 + m)
+    if endian == "big" then
+      yield(high)
+      yield(low)
+    else
+      yield(low)
+      yield(high)
+    end
+  end
   return coroutine.wrap(function()
-    -- This header is slightly special, in that it is accepted by lbcv's decoder,
-    -- but will never be accepted by an unmodified Lua 5.2, as it forces all
-    -- numbers and strings to be zero bytes long.
-    yield "\27Lua\x52\0\1\4\0\4\0\0\x19\x93\r\n\x1a\n"
+    -- Header
+    yield "\27Lua\x52\0"
+    yield(string.char(endian == "little" and 1 or 0, sizeof_int, sizeof_sizet, sizeof_instruction))
+    yield "\8\0\x19\x93\r\n\x1a\n"
+    -- Helper for an individual prototype
     local function compile(proto, parent)
-      yield(ub4(0):rep(2))
+      -- Line, last line
+      int(0)
+      int(0)
+      -- Stack and parameter info
       yield(string.char(proto.numparams or 0, proto.vararg and 1 or 0, proto.numregs or 0))
       -- Instruction array
-      yield(ub4(#proto.code))
+      int(#proto.code)
       for _, ins in ipairs(proto.code) do
         local mode = opcode_modes[ins.op]
         local op = opcode_name_to_code[ins.op]
@@ -267,33 +346,33 @@ local function assemble(code)
         elseif mode ~= "Ax" then
           error("Unknown encoding mode " .. mode)
         end
-        yield(ub4(encoded))
+        instruction(encoded)
       end
       -- Constant table (exlcuding prototypes)
-      yield(ub4(#proto.constants))
+      int(#proto.constants)
       for _, k in ipairs(proto.constants) do
         local t = type(k)
-        local encoded
         if t == "boolean" then
-          encoded = k and "\1\1" or "\1\0"
+          yield(k and "\1\1" or "\1\0")
         elseif t == "nil" then
-          encoded = "\0"
+          yield "\0"
         elseif t == "number" then
-          encoded = "\3"
+          yield "\3"
+          num(k)
         elseif t == "string" then
-          encoded = "\4"
+          yield "\4"
+          str(k)
         else
           error("Invalid constant type: " .. t)
         end
-        yield(encoded)
       end
       -- Prototypes
-      yield(ub4(#proto.prototypes))
+      int(#proto.prototypes)
       for _, p in ipairs(proto.prototypes) do
         compile(p, proto)
       end
       -- Upvalues
-      yield(ub4(#proto.upvalues))
+      int(#proto.upvalues)
       for _, upvalue in ipairs(proto.upvalues) do
         if not parent then
           yield "\0\0"
@@ -306,9 +385,14 @@ local function assemble(code)
         end
       end
       -- Debug information
-      yield(ub4(0):rep(3))
+      str(nil)
+      int(0)
+      int(0)
+      int(0)
     end
+    -- Recurse from top-level prototype
     compile(prototypes._main, nil)
+    -- Return nothing more
     while true do yield "" end
   end)
 end
