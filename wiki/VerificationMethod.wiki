@@ -1,4 +1,5 @@
 #summary Description of what is verified.
+#labels Featured,Phase-Design
 
 = Verification performed during decoding =
 
@@ -18,9 +19,9 @@
   * That control flow doesn't leave the instruction list after execution of the instruction.
 
 = Per-instruction verification performed with tracing information =
-  * That whenever a register is read from, or used for anything other than being assigned to (including being made into an upvalue), the value in the register was previously assigned from from within the function (or when the register is an upvalue, set by an upvalue assignment elsewhere). In particular, this means that the contents of registers left behind by other function calls cannot be obtained or used.
+  * That whenever a register is read from, or used for anything other than being assigned to (including being made into an upvalue), the value in the register was previously assigned to from within the function (or when the register is an upvalue, set by an upvalue assignment elsewhere). In particular, this means that the contents of registers left behind by other function calls cannot be obtained or used.
   * That when a call is made, none of the registers containing function arguments are open upvalues (as otherwise, the values in those registers could be changed after the called function validates them, thus allowing argument validation to be bypassed).
   * That when a call is made, the register containing the function itself is not an open upvalue (as otherwise, all references to the currently running function could be removed, potentially leading to the currently running function being garbage collected).
-  * That when an instruction uses a variable range of registers (via _top_), that range could not have a negative size.
+  * That when an instruction uses a variable range of registers (via _top_), that range could not have a negative size, and that _top_ was set by the previous instruction.
   * That the loop control registers used by {{{FORLOOP}}} all hold number values (as otherwise, values which are not numbers can be cast to numbers, allowing for information leakage).
   * That the register used by {{{SETLIST}}} which should contain a table value does infact hold a table value (as otherwise, values which are not tables can be reinterpreted as tables).
