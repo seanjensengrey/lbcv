@@ -19,7 +19,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE. ]]
 
 assert(_VERSION == "Lua 5.2", "Lua 5.2 is required")
-local bv = require "bytecodeverify"
+local bv = require "lbcv"
 local asm = require "assemble"
 
 local tests
@@ -44,6 +44,7 @@ do
           a, b = b, a
         end)))
       end},
+      -- This test is a bit slow to run, so can be commented out.
       -- [[
       {"Constants", function()
         local t = {"local x"}
@@ -395,10 +396,54 @@ do
         assertTrue(bv.verify(asm.assemble"infinite: jmp 0 infinite"))
       end},
     },
+    {"Interface",
+      {"Yield over verify call", function()
+        local minimal = asm.assemble"return 0 1"
+        local co = coroutine.create(function()
+          assertTrue(bv.verify(function() return coroutine.yield() end))
+        end)
+        coroutine.resume(co)
+        local part
+        repeat
+          part = minimal()
+          coroutine.resume(co, part)
+        until part == ""
+        assertEqual("dead", coroutine.status(co))
+      end},
+    },
+    {"Load",
+      {"Text", function()
+        local f = assertTrue(bv.load[[return "Test"]])
+        assertEqual("Test", f())
+      end},
+      {"Binary", function()
+        local f = assertTrue(bv.load(string.dump(loadstring[[return "Test"]])))
+        assertEqual("Test", f())
+      end},
+      {"Assembled", function()
+        local f = assertTrue(bv.load(asm.assemble[[
+          .k k "Test"
+          .r r 0
+          loadk r k
+          return 0 2
+        ]]))
+        assertEqual("Test", f())
+      end},
+      {"Malicious", function()
+        assertMalicious(bv.load(asm.assemble[[
+          .params 2
+          .stack 2
+          setlist 0 1 1
+          return 0 1
+        ]]))
+      end},
+    },
   }
+  -- If you're on Windows, and have a directory full of Lua files to test, then
+  -- the following can be uncommented to check that they all verify cleanly:
   --[=[
-  for filename in io.popen([[dir /B /S C:\CPP\CorsixTH\CorsixTH\Lua\]]):lines() do
-    if filename:sub(-4, -1) == ".lua" then
+  for filename in io.popen([[dir /B /S E:\CPP\2K8\CorsixTH\CorsixTH\Lua\]]):lines() do
+    if filename:sub(-4, -1):lower() == ".lua" then
       tests[#tests + 1] = {filename, function()
         assertTrue(bv.verify(string.dump(assert(loadfile(filename)))))
       end}
@@ -420,6 +465,7 @@ local testenv = setmetatable({
     failmsg = ...
     assert(not not x)
     failmsg = nil
+    return x, ...
   end,
   assertMalformed = function(status, err)
     num_asserts = num_asserts + 1

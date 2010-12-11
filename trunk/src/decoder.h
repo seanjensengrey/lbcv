@@ -34,82 +34,28 @@ SOFTWARE. */
  */
 
 /**
- * Container for all the state required during the decoding process.
+ * Return value from decode_bytecode_pump() indicating that decoding has not
+ * encountered any problems, and and can continue given more input.
  */
-struct decode_state
-{
-    /**
-     * A Lua state to be passed to decode_state::reader.
-     */
-    lua_State* lua;
-    /**
-     * A function which is used to obtain the next chunk of bytes in the
-     * stream of bytecode. Consult the Lua manual for the behaviour of reader
-     * functions.
-     */
-    lua_Reader reader;
-    /**
-     * An opaque pointer passed to decode_state::reader.
-     */
-    void* readerud;
-    /**
-     * A function which is used for all memory allocation and deallocation.
-     * Consult the Lua manual for the behaviour of allocator functions.
-     */
-    lua_Alloc alloc;
-    /**
-     * An opaque pointer passed to decode_state::alloc.
-     */
-    void* allocud;
-    /**
-     * Pointer to the next byte(s) in the stream of bytecode. The number of
-     * bytes present at this address is stored in decode_state::chunklen. This
-     * value will be the address most recently returned by the reader function,
-     * incremented by some number of bytes, or @c NULL if the reader function
-     * has yet to be called or has signaled the end of the stream.
-     */
-    const unsigned char* chunk;
-    /**
-     * The number of valid bytes present at decode_state::chunk.
-     */
-    size_t chunklen;
-    /**
-     * Indication of whether or not the bytecode stream uses the same
-     * endianness as the machine which the verifier is being run on.
-     * If @c true, the endianness is different, and if @c false, the endianness
-     * is the same.
-     */
-    bool swapendian;
-    /**
-     * Indication of whether or not the bytecode stream stores integers in
-     * little endian format.
-     * If @c true, the endianness is little, and if @c false, the endianness
-     * is big.
-     */
-    bool littleendian;
-    /**
-     * The number of bytes used to store an @c int in the bytecode stream.
-     */
-    size_t sizeint;
-    /**
-     * The number of bytes used to store a @c size_t in the bytecode stream.
-     */
-    size_t sizesize;
-    /**
-     * The number of bytes used to store a Lua virtual machine instruction in
-     * the bytecode stream.
-     */
-    size_t sizeins;
-    /**
-     * The number of bytes used to store a Lua number in the bytecode stream.
-     */
-    size_t sizenum;
-    /**
-     * The current recursion depth of prototype decoding.
-     */
-    int level;
-};
-typedef struct decode_state decode_state_t;
+#define DECODE_YIELD 0
+
+/**
+ * Return value from decode_bytecode_pump() indicating that decoding has
+ * encountered invalid bytecode, and should not be supplied with further input.
+ */
+#define DECODE_FAIL 1
+
+/**
+ * Return value from decode_bytecode_pump() indicating that an internal error
+ * occurred during the decoding process.
+ */
+#define DECODE_ERROR 2
+
+/**
+ * Return value from decode_bytecode_pump() indicating that insufficient memory
+ * was available to perform the decoding process.
+ */
+#define DECODE_ERROR_MEM 3
 
 /**
  * Container for all the information on a function prototype which the verifier
@@ -193,56 +139,154 @@ struct decoded_prototype
 typedef struct decoded_prototype decoded_prototype_t;
 
 /**
- * Convert a stream of bytes containing the Lua 5.2 bytecode for a compiled
- * function into a structure which can be used by the verifier for verifying
- * that the function's bytecode isn't malicious.
+ * Container for all the state required during the decoding process.
  *
- * @param L A Lua state to be passed to @p reader, and whose memory allocator
- *          should be used for allocating the returned structure.
- * @param reader A function which will be called repeatedly to get chunks of
- *               the stream of bytes (see the Lua manual's description of a
- *               reader function).
- * @param dt An opaque pointer to be passed to @p reader.
- *
- * @return @c NULL if the stream of bytes didn't contain valid Lua 5.2 bytecode
- *         or an error occured during the decoding process. Otherwise, will be
- *         a valid pointer to a newly allocated decoded_prototype_t, which
- *         should later be freed by calling free_prototype().
+ * This structure should not be allocated on the stack, as it ends with a
+ * variably sized array.
  */
-decoded_prototype_t* decode_bytecode(lua_State *L, lua_Reader reader,
-                                     void* dt);
+struct decode_state
+{
+    /**
+     * A function which is used for all memory allocation and deallocation.
+     * Consult the Lua manual for the behaviour of allocator functions.
+     */
+    lua_Alloc alloc;
+    /**
+     * An opaque pointer passed to decode_state::alloc.
+     */
+    void* allocud;
+    /**
+     * Pointer to the next byte(s) in the stream of bytecode. The number of
+     * bytes present at this address is stored in decode_state::chunklen.
+     */
+    const unsigned char* chunk;
+    /**
+     * The number of valid bytes present at decode_state::chunk.
+     */
+    size_t chunklen;
+    /**
+     * Indication of whether or not the bytecode stream uses the same
+     * endianness as the machine which the verifier is being run on.
+     * If @c true, the endianness is different, and if @c false, the endianness
+     * is the same.
+     */
+    bool swapendian;
+    /**
+     * Indication of whether or not the bytecode stream stores integers in
+     * little endian format.
+     * If @c true, the endianness is little, and if @c false, the endianness
+     * is big.
+     */
+    bool littleendian;
+    /**
+     * The number of bytes used to store an @c int in the bytecode stream.
+     */
+    size_t sizeint;
+    /**
+     * The number of bytes used to store a @c size_t in the bytecode stream.
+     */
+    size_t sizesize;
+    /**
+     * The number of bytes used to store a Lua virtual machine instruction in
+     * the bytecode stream.
+     */
+    size_t sizeins;
+    /**
+     * The number of bytes used to store a Lua number in the bytecode stream.
+     */
+    size_t sizenum;
+    /**
+     * The current recursion depth of prototype decoding.
+     */
+    int level;
+    /**
+     * When yielded, the number of bytes of input which need to be supplied in
+     * order to be resumed.
+     */
+    size_t readlen;
+    /**
+     * When yielded, the buffer which input should be placed in prior to
+     * resuming. This field may be @c NULL, indicating that input should be
+     * read and then discarded.
+     */
+    unsigned char* readtarget;
+    /**
+     * When yielded, the position at which to resume.
+     */
+    size_t yieldpos;
+    /**
+     * When yielded, the value of the loop counter (if any).
+     */
+    size_t i;
+    /**
+     * A general-purpose buffer which can be used for reading small amounts.
+     * This needs to be large enough for the header (currently 18 bytes),
+     * miscellaneous small reads (currently up to 3 bytes), and integer fields
+     * (currently at most 8 bytes on common architectures).
+     */
+    unsigned char buffer[32];
+    /**
+     * A stack containing all the prototypes which are currently in the process
+     * of being decoded.
+     * 
+     * The number of elements in this stack is given by decode_state::level.
+     *
+     * The length of this array is variable, and determines the maximum
+     * recursion depth of prototype decoding (which should be bounded anyway).
+     */
+    decoded_prototype_t* stack[1];
+};
+typedef struct decode_state decode_state_t;
 
 /**
- * Read a bytecode header and use it to fill in the appropriate parts of a
- * decode state.
+ * Initialise the bytecode decoding process.
  *
- * @param ds A decode_state_t whose reading stream is positioned at the start
- *           of a Lua 5.2 bytecode header. The reading stream will be advanced
- *           past the bytecode header, and the header will be used to fill in
- *           fields of the decode_state_t neccessary for decoding prototypes.
+ * @param alloc An allocator function to be used to allocate all memory used
+ *              during the decoding process.
+ * @param allocud An opaque pointer which will be passed to @p alloc.
  *
- * @return @c true if a header was successfully decoded, @c false if decoding
- *         failed (in which which case the decode_state_t will not be in a
- *         state suitable for decoding prototypes).
+ * @return @c NULL on memory allocation failure. Otherwise, a decode_state_t
+ *         which can be used with decode_bytecode_pump() and must be freed by
+ *         the caller via decode_bytecode_finish().
  */
-bool decode_header(decode_state_t* ds);
+decode_state_t* decode_bytecode_init(lua_Alloc alloc, void* allocud);
 
 /**
- * Read and decode a single prototype (and all of its child prototypes) from a
- * decode state.
+ * Supply the next chunk of bytes containing Lua 5.2 bytecode to the bytecode
+ * decoding process.
  *
- * @param ds A decode_state_t whose reading stream is positioned at the start
- *           of a dumped Lua 5.2 function. The reading stream will be advanced
- *           past the prototype.
+ * @param ds A decode_state_t which is ready to consume some more input (which
+ *           is true of freshly created states, and those for which prior calls
+ *           to decode_bytecode_pump() have returned @c DECODE_YIELD).
+ * @param pData Pointer to the next chunk of bytes in the Lua 5.2 bytecode
+ *              stream being decoded.
+ * @param iLength The number of bytes present at @p pData.
  *
- * @return @c NULL if the reading stream didn't contain a valid Lua 5.2 dumped
- *         function, or an error occured during the decoding process. In this
- *         case, the reading stream will be left in an unspecified position.
- *         Otherwise, a valid pointer to a newly allocated decoded_prototype_t
- *         will be returned, which should later be freed by calling
- *         free_prototype().
+ * @return One of @c DECODE_YIELD, @c DECODE_FAIL, @c DECODE_ERROR, or
+ *         @c DECODE_ERROR_MEM. If @c DECODE_YIELD is returned, then the
+ *         decoding process is so far successful, but needs the next chunk of
+ *         bytes to continue decoding (which should be supplied in a subsequent
+ *         call to decode_bytecode_pump). If @c DECODE_FAIL is returned, then
+ *         the stream of bytes did not contain valid Lua 5.2 bytecode. If an
+ *         error status is returned, then the decoding process failed, but not
+ *         due to the bytecode being invalid.
  */
-decoded_prototype_t* decode_prototype(decode_state_t* ds);
+int decode_bytecode_pump(decode_state_t* ds, const unsigned char* pData, size_t iLength);
+
+/**
+ * Finish the bytecode decoding process, and free the associated state.
+ *
+ * @param ds A decode_state_t which has previously been created by calling
+ *           decode_bytecode_init() and supplied with bytecode via calls to
+ *           decode_bytecode_pump().
+ *
+ * @return If the bytecode supplied to the decode state was valid Lua 5.2
+ *         bytecode for a single chunk, then a valid pointer to a
+ *         decoded_prototype_t representing the chunk, which can be passed to
+ *         verify(), and must at some point be freed by the caller with
+ *         free_prototype(). In other cases, the return value is @c NULL.
+ */
+decoded_prototype_t* decode_bytecode_finish(decode_state_t* ds);
 
 /**
  * Decode a single Lua 5.2 virtual machine instruction.

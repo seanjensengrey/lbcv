@@ -286,7 +286,9 @@ local function assemble(code)
   local function str(s) -- Helper to write a string
     if s then
       yield(ub_sizet(#s + 1))
-      yield(s)
+      if s ~= "" then
+        yield(s)
+      end
       yield "\0"
     else
       yield(ub_sizet(0))
