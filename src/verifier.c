@@ -68,38 +68,29 @@ void reg_state_setknown(reg_state_t* state, reg_index_t reg)
 
 void reg_state_setopen(reg_state_t* state, reg_index_t reg)
 {
-    if((state->state_flags[reg] & REG_OPENUPVALUE) == 0)
-    {
-        ++state->numopen;
-        state->state_flags[reg] |= REG_OPENUPVALUE;
-    }
+    state->state_flags[reg] |= REG_OPENUPVALUE;
+    state->state_flags[reg] &=~ REG_TYPE_MASK;
 }
 
 void reg_state_settable(reg_state_t* state, reg_index_t reg)
 {
-    reg_state_unsetnumber(state, reg);
-    if((state->state_flags[reg] & REG_ISTABLE) == 0)
-    {
-        state->state_flags[reg] |= REG_ISTABLE | REG_VALUEKNOWN;
-        ++state->numknowntypes;
-    }
+    if(reg_state_isopen(state, reg))
+        return;
+    state->state_flags[reg] &=~ REG_TYPE_MASK;
+    state->state_flags[reg] |= REG_ISTABLE | REG_VALUEKNOWN;
 }
 
 void reg_state_setnumber(reg_state_t* state, reg_index_t reg)
 {
-    reg_state_unsettable(state, reg);
-    if((state->state_flags[reg] & REG_ISNUMBER) == 0)
-    {
-        state->state_flags[reg] |= REG_ISNUMBER | REG_VALUEKNOWN;
-        ++state->numknowntypes;
-    }
+    if(reg_state_isopen(state, reg))
+        return;
+    state->state_flags[reg] &=~ REG_TYPE_MASK;
+    state->state_flags[reg] |= REG_ISNUMBER | REG_VALUEKNOWN;
 }
 
 void reg_state_unsetknown(reg_state_t* state, reg_index_t reg)
 {
-    if((state->state_flags[reg] & (REG_ISNUMBER | REG_ISTABLE)) != 0)
-        --state->numknowntypes;
-    state->state_flags[reg] &=~ (REG_VALUEKNOWN | REG_ISNUMBER | REG_ISTABLE);
+    state->state_flags[reg] &=~ (REG_VALUEKNOWN | REG_TYPE_MASK);
 }
 
 void reg_state_unsetknowntop(verify_state_t* vs, reg_state_t* state, reg_index_t reg)
@@ -110,29 +101,17 @@ void reg_state_unsetknowntop(verify_state_t* vs, reg_state_t* state, reg_index_t
 
 void reg_state_unsetopen(reg_state_t* state, reg_index_t reg)
 {
-    if((state->state_flags[reg] & REG_OPENUPVALUE) != 0)
-    {
-        --state->numopen;
-        state->state_flags[reg] &=~ REG_OPENUPVALUE;
-    }
+    state->state_flags[reg] &=~ REG_OPENUPVALUE;
 }
 
 void reg_state_unsettable(reg_state_t* state, reg_index_t reg)
 {
-    if((state->state_flags[reg] & REG_ISTABLE) != 0)
-    {
-        --state->numknowntypes;
-        state->state_flags[reg] &=~ REG_ISTABLE;
-    }
+    state->state_flags[reg] &=~ REG_ISTABLE;
 }
 
 void reg_state_unsetnumber(reg_state_t* state, reg_index_t reg)
 {
-    if((state->state_flags[reg] & REG_ISNUMBER) != 0)
-    {
-        --state->numknowntypes;
-        state->state_flags[reg] &=~ REG_ISNUMBER;
-    }
+    state->state_flags[reg] &=~ REG_ISNUMBER;
 }
 
 int reg_state_merge(verify_state_t* vs, reg_state_t* to, reg_state_t* from)
@@ -154,6 +133,7 @@ int reg_state_merge(verify_state_t* vs, reg_state_t* to, reg_state_t* from)
             newflags |= REG_OPENUPVALUE;
             if((newflags & REG_VALUEKNOWN) == 0)
                 return 0; /* unable to merge */
+            newflags &=~ REG_TYPE_MASK;
         }
         if(newflags != to->state_flags[reg])
             anychanges = true;
@@ -165,8 +145,6 @@ int reg_state_merge(verify_state_t* vs, reg_state_t* to, reg_state_t* from)
 void reg_state_copy(verify_state_t* vs, reg_state_t* to, reg_state_t* from)
 {
     reg_index_t reg;
-    to->numopen = from->numopen;
-    to->numknowntypes = from->numknowntypes;
     to->top_base = from->top_base;
     for(reg = 0; reg < vs->prototype->numregs; ++reg)
         to->state_flags[reg] = from->state_flags[reg];
@@ -176,23 +154,17 @@ bool reg_state_move(reg_state_t* state, reg_index_t to, reg_index_t from)
 {
     if(to == from)
         return true;
-    reg_state_unsetknown(state, to);
-    if(reg_state_isknown(state, from))
-        reg_state_setknown(state, to);
-    else if(reg_state_isopen(state, to))
+    state->state_flags[to] &= REG_OPENUPVALUE; 
+    state->state_flags[to] |= (state->state_flags[from] &~ REG_OPENUPVALUE);
+    if((state->state_flags[to] & (REG_OPENUPVALUE | REG_VALUEKNOWN)) == REG_OPENUPVALUE)
         return false;
-    if(reg_state_istable(state, from))
-        reg_state_settable(state, to);
-    if(reg_state_isnumber(state, from))
-        reg_state_setnumber(state, to);
     return true;
 }
 
 void reg_state_assignment(reg_state_t* state, reg_index_t reg, int type)
 {
     reg_state_setknown(state, reg);
-    reg_state_unsetnumber(state, reg);
-    reg_state_unsettable(state, reg);
+    state->state_flags[reg] &=~ REG_TYPE_MASK;
     switch(type)
     {
     case LUA_TTABLE:
@@ -200,8 +172,6 @@ void reg_state_assignment(reg_state_t* state, reg_index_t reg, int type)
         break;
     case LUA_TNUMBER:
         reg_state_setnumber(state, reg);
-        break;
-    default:
         break;
     }
 }
@@ -211,10 +181,7 @@ void reg_state_settop(verify_state_t* vs, reg_state_t* state, reg_index_t base)
     reg_index_t i;
     state->top_base = (int)base;
     for(i = base; i < vs->prototype->numregs; ++i)
-    {
-        reg_state_unsetnumber(state, i);
-        reg_state_unsettable(state, i);
-    }
+        state->state_flags[i] &=~ REG_TYPE_MASK;
 }
 
 bool reg_state_usetop(reg_state_t* state, reg_index_t base)
@@ -227,25 +194,6 @@ bool reg_state_usetop(reg_state_t* state, reg_index_t base)
             return false;
     }
     return true;
-}
-
-/**
- * Remove type information from all open upvalues.
- *
- * @param vs The verify_state_t to which @p regs belongs.
- * @param regs The register state to clear open upvalue types from.
- */
-void clear_upvalue_types(verify_state_t* vs, reg_state_t* regs)
-{
-    reg_index_t i;
-    for(i = 0; i < vs->prototype->numregs; ++i)
-    {
-        if(reg_state_isopen(regs, i))
-        {
-            reg_state_unsetnumber(regs, i);
-            reg_state_unsettable(regs, i);
-        }
-    }
 }
 
 /**
@@ -571,7 +519,6 @@ OP_VARARG_fallthrough:
 bool simulate_instruction(verify_state_t* vs, instruction_state_t* ins, int op,
                           int a, int b, int c)
 {
-    bool possiblecall = false;
     reg_state_copy(vs, &vs->next_regs, ins->regs);
     vs->next_regs.top_base = -1;
 
@@ -634,10 +581,7 @@ bool simulate_instruction(verify_state_t* vs, instruction_state_t* ins, int op,
         && rk_type(vs, ins->regs, c) == LUA_TNUMBER)
             reg_state_setnumber(&vs->next_regs, (reg_index_t)a);
         else
-        {
             reg_state_unsetnumber(&vs->next_regs, (reg_index_t)a);
-            possiblecall = true; /* from metamethod */
-        }
         break;
     
     case OP_UNM:
@@ -646,25 +590,13 @@ bool simulate_instruction(verify_state_t* vs, instruction_state_t* ins, int op,
         if(reg_state_isnumber(ins->regs, (reg_index_t)b))
             reg_state_setnumber(&vs->next_regs, (reg_index_t)a);
         else
-        {
             reg_state_unsetnumber(&vs->next_regs, (reg_index_t)a);
-            possiblecall = true; /* from metamethod */
-        }
         break;
 
     case OP_CONCAT:
-        possiblecall = true; /* from metamethod */
         if(!reg_state_areknown(ins->regs, b, c - b + 1))
             return false;
         reg_state_assignment(&vs->next_regs, (reg_index_t)a, LUA_TNONE);
-        break;
-
-    case OP_EQ:
-    case OP_LT:
-    case OP_LE:
-        if(rk_type(vs, ins->regs, b) != LUA_TNUMBER
-        || rk_type(vs, ins->regs, c) != LUA_TNUMBER)
-            possiblecall = true; /* from metamethod */
         break;
 
     case OP_TEST:
@@ -688,7 +620,6 @@ bool simulate_instruction(verify_state_t* vs, instruction_state_t* ins, int op,
         reg_state_unsetknowntop(vs, &vs->next_regs, (reg_index_t)(a+1));
         reg_state_settop(vs, &vs->next_regs, (reg_index_t)a);
 OP_TAILCALL_fallthrough:
-        possiblecall = true;
         if(b == 0)
         {
             if(!reg_state_usetop(ins->regs, (reg_index_t)(a+1)))
@@ -745,7 +676,6 @@ OP_TAILCALL_fallthrough:
             return false;
         for(c += 2; c >= 3; --c)
             reg_state_assignment(&vs->next_regs, (reg_index_t)(a+c), LUA_TNONE);
-        possiblecall = true;
         /* fallthrough */
 
     case OP_TFORLOOP:
@@ -805,27 +735,12 @@ OP_TAILCALL_fallthrough:
         }
         /* fallthrough */
 
-    case OP_GETTABUP:
-    case OP_GETTABLE:
-    case OP_SETTABUP:
-    case OP_LEN:
-        possiblecall = true; /* from metamethod */
-        /* fallthrough */
-
     default:
         if(testAMode(op) != 0)
             reg_state_assignment(&vs->next_regs, (reg_index_t)a, LUA_TNONE);
         break;
     }
     
-   
-    /* If a call was made, then the values stored in open upvalues might get
-     changed by the call, so type information needs to be cleared. */
-    if(possiblecall && vs->next_regs.numknowntypes > 0
-    && vs->next_regs.numopen > 0)
-    {
-        clear_upvalue_types(vs, &vs->next_regs);
-    }
     return true;
 }
 
@@ -937,8 +852,6 @@ bool verify(decoded_prototype_t* prototype, lua_Alloc alloc, void* ud)
     
     if(allgood)
     {
-        vs->instruction_states[0].regs->numopen = 0;
-        vs->instruction_states[0].regs->numknowntypes = 0;
         vs->instruction_states[0].regs->top_base = -1;
         for(i = 0; i < prototype->numregs; ++i)
         {
