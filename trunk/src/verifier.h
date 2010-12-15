@@ -41,6 +41,8 @@ SOFTWARE. */
 /* The register definitely contains a number value. */
 #define REG_ISNUMBER    0x8
 
+#define REG_TYPE_MASK (REG_ISTABLE | REG_ISNUMBER)
+
 /**
  * Container for the state of every virtual machine register at a specific
  * point of execution.
@@ -52,18 +54,6 @@ SOFTWARE. */
  */
 struct reg_state
 {
-    /**
-     * The number of entries in reg_state::state_flags which are open (that is,
-     * have the REG_OPENUPVALUE flag set).
-     */
-    unsigned int numopen;
-
-    /**
-     * The number of entries in reg_state::state_flags which specify a type
-     * (that is, have the REG_ISTABLE or REG_ISNUMBER flag set).
-     */
-    unsigned int numknowntypes;
-
     /**
      * Location of the "top" register marker.
      *
