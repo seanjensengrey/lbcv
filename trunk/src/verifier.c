@@ -20,6 +20,7 @@ SOFTWARE. */
 
 #include "verifier.h"
 #include "opcodes.h"
+#include <string.h>
 
 bool reg_state_isknown(reg_state_t* state, reg_index_t reg)
 {
@@ -127,27 +128,31 @@ int reg_state_merge(verify_state_t* vs, reg_state_t* to, reg_state_t* from)
 
     for(reg = 0; reg < vs->prototype->numregs; ++reg)
     {
-        unsigned char newflags = to->state_flags[reg] & from->state_flags[reg];
-        if(((to->state_flags[reg] | from->state_flags[reg]) & REG_OPENUPVALUE) != 0)
+        unsigned char toflags = to->state_flags[reg];
+        unsigned char fromflags = from->state_flags[reg];
+        unsigned char newflags = toflags & fromflags;
+        if(((toflags ^ fromflags) & REG_OPENUPVALUE) != 0)
         {
             newflags |= REG_OPENUPVALUE;
             if((newflags & REG_VALUEKNOWN) == 0)
                 return 0; /* unable to merge */
             newflags &=~ REG_TYPE_MASK;
         }
-        if(newflags != to->state_flags[reg])
+        if(newflags != toflags)
+        {
             anychanges = true;
-        to->state_flags[reg] = newflags;
+            to->state_flags[reg] = newflags;
+        }
     }
     return anychanges ? 1 : -1;
 }
 
+#define ALIGN(x) (((x) + sizeof(int)) & ~(sizeof(int) - 1))
+#define SIZEOF_reg_state_t(vs) ALIGN(sizeof(reg_state_t) + (vs)->prototype->numregs - 1)
+
 void reg_state_copy(verify_state_t* vs, reg_state_t* to, reg_state_t* from)
 {
-    reg_index_t reg;
-    to->top_base = from->top_base;
-    for(reg = 0; reg < vs->prototype->numregs; ++reg)
-        to->state_flags[reg] = from->state_flags[reg];
+    memcpy(to, from, SIZEOF_reg_state_t(vs));
 }
 
 bool reg_state_move(reg_state_t* state, reg_index_t to, reg_index_t from)
@@ -269,9 +274,7 @@ bool verify_next(verify_state_t* vs, instruction_state_t* ins, int offset)
     ins += offset;
     if(ins->regs == NULL)
     {
-        ins->regs = (reg_state_t*)alloc_size(vs, sizeof(reg_state_t) + vs->prototype->numregs);
-        if(ins->regs == NULL)
-            return false;
+        ins->regs = (reg_state_t*)(vs->reg_states + (ins - vs->instruction_states) * SIZEOF_reg_state_t(vs));
         reg_state_copy(vs, ins->regs, &vs->next_regs);
     }
     else
@@ -289,9 +292,12 @@ bool verify_next(verify_state_t* vs, instruction_state_t* ins, int offset)
 
     if(!ins->needstracing)
     {
+        instruction_state_t** insert_at = &vs->next_to_trace;
         ins->needstracing = true;
-        ins->next_to_trace = vs->next_to_trace;
-        vs->next_to_trace = ins;
+        while(*insert_at && *insert_at < ins)
+            insert_at = &(**insert_at).next_to_trace;
+        ins->next_to_trace = *insert_at;
+        *insert_at = ins;
     }
 
     return true;
@@ -381,7 +387,7 @@ bool verify_static(verify_state_t* vs, instruction_state_t* ins, int op, int a,
         break;
 
     case OP_LOADBOOL:
-        if(b != 0 && b != 1)
+        if((b | c) > 1)
             return false;
         break;
 
@@ -757,7 +763,7 @@ bool schedule_next(verify_state_t* vs, instruction_state_t* ins, int op, int a,
     switch(op)
     {
     case OP_LOADBOOL:
-        if(!verify_next(vs, ins, (c != 0) ? 1 : 0))
+        if(!verify_next(vs, ins, c))
             return false;
         break;
 
@@ -824,68 +830,90 @@ bool verify_step(verify_state_t* vs)
     return true;
 }
 
-bool verify(decoded_prototype_t* prototype, lua_Alloc alloc, void* ud)
+void find_max_size(decoded_prototype_t* prototype, unsigned int* numregs, size_t* numinstructions)
 {
     size_t i;
+    if(*numregs < prototype->numregs)
+        *numregs = prototype->numregs;
+    if(*numinstructions < prototype->numinstructions)
+        *numinstructions = prototype->numinstructions;
+    for(i = 0; i < prototype->numprototypes; ++i)
+        find_max_size(prototype->prototypes[i], numregs, numinstructions);
+}
+
+bool verify_prototype(verify_state_t* vs, decoded_prototype_t* prototype)
+{
+    size_t i;
+
+    if(prototype->numinstructions == 0)
+        return false;
+    if(prototype->numparams > prototype->numregs)
+        return false;
+    vs->prototype = prototype;
+
+    memset(vs->instruction_states, 0, prototype->numinstructions * sizeof(instruction_state_t));
+    vs->instruction_states[0].regs = (reg_state_t*)vs->reg_states;
+
+    vs->instruction_states[0].regs->top_base = prototype->numregs;
+    for(i = 0; i < prototype->numregs; ++i)
+    {
+        vs->instruction_states[0].regs->state_flags[i] = 0;
+        if(i < prototype->numparams)
+            reg_state_setknown(vs->instruction_states[0].regs, i);
+    }
+    vs->instruction_states[0].needstracing = true;
+    vs->next_to_trace = vs->instruction_states;
+
+    while(vs->next_to_trace)
+    {
+        if(!verify_step(vs))
+            return false;
+    }
+
+    /* Recursively verify children */
+    for(i = 0; i < prototype->numprototypes; ++i)
+    {
+        if(!verify_prototype(vs, prototype->prototypes[i]))
+            return false;
+    }
+
+    return true;
+}
+
+bool verify(decoded_prototype_t* prototype, lua_Alloc alloc, void* ud)
+{
     bool allgood = true;
-    verify_state_t* vs = (verify_state_t*)alloc(ud, NULL, 0, sizeof(verify_state_t) + prototype->numregs);
+    unsigned int max_numregs = 0;
+    size_t max_numinstructions = 0;
+    size_t max_reg_state_size;
+    verify_state_t* vs;
+    find_max_size(prototype, &max_numregs, &max_numinstructions);
+    max_reg_state_size = ALIGN(sizeof(reg_state_t) + max_numregs - 1);
+
+    vs = (verify_state_t*)alloc(ud, NULL, 0, sizeof(verify_state_t) + max_numregs + ALIGN(1));
     if(vs == NULL)
         return false;
-
-    vs->prototype = prototype;
+    
     vs->alloc = alloc;
     vs->allocud = ud;
-    if(prototype->numinstructions == 0)
-        allgood = false;
-    if(prototype->numparams > prototype->numregs)
-        allgood = false;
-    vs->instruction_states = alloc_vector(vs, instruction_state_t, prototype->numinstructions);
+    vs->instruction_states = alloc_vector(vs, instruction_state_t, max_numinstructions);
     if(vs->instruction_states == NULL)
         allgood = false;
 
     if(allgood)
     {
-        for(i = 0; i < prototype->numinstructions; ++i)
-        {
-            vs->instruction_states[i].needstracing = false;
-            vs->instruction_states[i].seen = false;
-            vs->instruction_states[i].regs = NULL;
-            vs->instruction_states[i].next_to_trace = NULL;
-        }
-        vs->instruction_states[0].regs = (reg_state_t*)alloc_size(vs, sizeof(reg_state_t) + prototype->numregs);
-        if(vs->instruction_states[0].regs == NULL)
+        vs->reg_states = alloc_size(vs, max_numinstructions * max_reg_state_size);
+        if(vs->reg_states == NULL)
             allgood = false;
-    }
-    
-    if(allgood)
-    {
-        vs->instruction_states[0].regs->top_base = prototype->numregs;
-        for(i = 0; i < prototype->numregs; ++i)
-        {
-            vs->instruction_states[0].regs->state_flags[i] = 0;
-            if(i < prototype->numparams)
-                reg_state_setknown(vs->instruction_states[0].regs, i);
-        }
-        vs->instruction_states[0].needstracing = true;
-        vs->next_to_trace = vs->instruction_states;
-
-        while(allgood && vs->next_to_trace)
-            allgood = verify_step(vs);
+        else
+            allgood = verify_prototype(vs, prototype);
     }
 
     /* Cleanup */
-    for(i = 0; i < prototype->numinstructions; ++i)
-    {
-        if(vs->instruction_states[i].regs)
-            free_size(vs->instruction_states[i].regs, vs, sizeof(reg_state_t) + prototype->numregs);
-    }
-    free_vector(vs->instruction_states, vs, instruction_state_t, prototype->numinstructions);
+    free_size(vs->reg_states, vs, max_numinstructions * max_reg_state_size);
+    free_vector(vs->instruction_states, vs, instruction_state_t, max_numinstructions);
 
-    alloc(ud, (void*)vs, sizeof(verify_state_t) + prototype->numregs, 0);
-
-    /* Recursively verify children */
-    for(i = 0; allgood && i < prototype->numprototypes; ++i)
-        allgood = verify(prototype->prototypes[i], alloc, ud);
+    alloc(ud, (void*)vs, sizeof(verify_state_t) + max_numregs - ALIGN(1), 0);
 
     return allgood;
 }
