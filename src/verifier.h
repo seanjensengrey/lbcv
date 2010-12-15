@@ -43,6 +43,8 @@ SOFTWARE. */
 
 #define REG_TYPE_MASK (REG_ISTABLE | REG_ISNUMBER)
 
+typedef unsigned int reg_index_t;
+
 /**
  * Container for the state of every virtual machine register at a specific
  * point of execution.
@@ -55,13 +57,13 @@ SOFTWARE. */
 struct reg_state
 {
     /**
-     * Location of the "top" register marker.
+     * Lowest possible location of the "top" register marker.
      *
-     * If the previous instruction did not set the "top" marker, then this will
-     * -1. Otherwise, it will be the index of lowest register whose value might
-     * have been set by the previous instruction's variable number of results.
+     * Generally this will be equal to the number of registers used by the
+     * function, but it can be set to a lower value by instructions which
+     * generate a variable number of results.
      */
-    int top_base;
+    reg_index_t top_base;
 
     /**
      * The state of every virtual machine register.
@@ -76,7 +78,6 @@ struct reg_state
     unsigned char state_flags[1];
 };
 typedef struct reg_state reg_state_t;
-typedef unsigned int reg_index_t;
 
 bool reg_state_isknown(reg_state_t* state, reg_index_t reg);
 bool reg_state_areknown(reg_state_t* state, reg_index_t reg, int num);

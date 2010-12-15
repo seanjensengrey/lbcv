@@ -119,7 +119,7 @@ static int l_verify(lua_State* L)
     if(lua_type(L, 1) == LUA_TSTRING)
     {
         str = lua_tolstring(L, 1, &len);
-        status = decode_bytecode_pump(ds, str, len);
+        status = decode_bytecode_pump(ds, (const unsigned char*)str, len);
     }
     else
     {
@@ -137,7 +137,7 @@ resume_continuation:
                     return not_string_err(L);
                 break;
             }
-            status = decode_bytecode_pump(ds, str, len);
+            status = decode_bytecode_pump(ds, (const unsigned char*)str, len);
         }
     }
     proto = decode_bytecode_finish(ds);
@@ -217,7 +217,7 @@ static const char *generic_reader(lua_State *L, void *ud, size_t *size)
         }
         if(stat->ds)
         {
-            int status = decode_bytecode_pump(stat->ds, s, len);
+            int status = decode_bytecode_pump(stat->ds, (const unsigned char*)s, len);
             if(status != DECODE_YIELD)
             {
                 lua_pop(L, 1);
@@ -257,7 +257,6 @@ static int l_load(lua_State *L)
     const char *str;
     void* allocud;
     lua_Alloc alloc = lua_getallocf(L, &allocud);
-    decoded_prototype_t* proto = NULL;
     int status;
     stat.f = 1;
     stat.mode = luaL_optstring(L, 3, "bt");
@@ -293,7 +292,7 @@ static int l_load(lua_State *L)
         if(str[0] == LUA_SIGNATURE[0])
         {
             stat.ds = decode_bytecode_init(alloc, allocud);
-            stat.decode_status = decode_bytecode_pump(stat.ds, str, len);
+            stat.decode_status = decode_bytecode_pump(stat.ds, (const unsigned char*)str, len);
             if(check_ds(L, &stat))
                 return 2;
         }

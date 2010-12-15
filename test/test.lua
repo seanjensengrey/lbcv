@@ -376,6 +376,22 @@ do
         assertTrue(bv.verify(asm.assemble(".r close_base 2\n" .. body)))
         assertMalicious(bv.verify(asm.assemble(".r close_base 5\n" .. body)))
       end},
+      {"Metamethod lowcall", function()
+        -- Here a lowcall can happen at the "add" instruction, as the "vararg"
+        -- can set "top" to somewhere within the register window, and then a
+        -- metamethod call can occur at "top".
+        local body = [[
+          .stack 10
+          .params 2
+          .vararg
+          loadnil 2 9
+          vararg 3 0
+          add 2 0 1
+          return ]]
+        assertTrue(bv.verify(asm.assemble(body .. "0 3")))
+        assertTrue(bv.verify(asm.assemble(body .. "3 0")))
+        assertMalicious(bv.verify(asm.assemble(body .. "3 6")))
+      end},
     },
     {"Exotic bytecode acceptance",
       {"Ignore unexecutable code", function()

@@ -179,16 +179,16 @@ void reg_state_assignment(reg_state_t* state, reg_index_t reg, int type)
 void reg_state_settop(verify_state_t* vs, reg_state_t* state, reg_index_t base)
 {
     reg_index_t i;
-    state->top_base = (int)base;
+    state->top_base = base;
     for(i = base; i < vs->prototype->numregs; ++i)
         state->state_flags[i] &=~ REG_TYPE_MASK;
 }
 
 bool reg_state_usetop(reg_state_t* state, reg_index_t base)
 {
-    if(state->top_base < (int)base)
+    if(state->top_base < base)
         return false;
-    for(; (int)base < state->top_base; ++base)
+    for(; base < state->top_base; ++base)
     {
         if(!reg_state_isknown(state, base))
             return false;
@@ -520,7 +520,11 @@ bool simulate_instruction(verify_state_t* vs, instruction_state_t* ins, int op,
                           int a, int b, int c)
 {
     reg_state_copy(vs, &vs->next_regs, ins->regs);
-    vs->next_regs.top_base = -1;
+    /* A debug hook could have fired after the prior instruction, causing
+     everything above "top" to be invalidated. Alternatively, a metamethod may
+     have fired as part of the prior instruction, which would have the same
+     effect. */
+    reg_state_unsetknowntop(vs, &vs->next_regs, ins->regs->top_base);
 
     /* Common behaviour: reading from R(B) or R(C) */
     if(getOpMode(op) == iABC)
@@ -634,6 +638,8 @@ OP_TAILCALL_fallthrough:
         }
         if(reg_state_areopen(ins->regs, (reg_index_t)a, vs->prototype->numregs - a))
             return false;
+        if(op == OP_CALL && c != 0)
+            reg_state_settop(vs, &vs->next_regs, vs->prototype->numregs);
         break;
 
     case OP_RETURN:
@@ -693,6 +699,7 @@ OP_TAILCALL_fallthrough:
         }
         if(!reg_state_areknown(ins->regs, (reg_index_t)(a+1), b))
             return false;
+        reg_state_settop(vs, &vs->next_regs, vs->prototype->numregs);
         break;
 
     case OP_CLOSE:
@@ -852,7 +859,7 @@ bool verify(decoded_prototype_t* prototype, lua_Alloc alloc, void* ud)
     
     if(allgood)
     {
-        vs->instruction_states[0].regs->top_base = -1;
+        vs->instruction_states[0].regs->top_base = prototype->numregs;
         for(i = 0; i < prototype->numregs; ++i)
         {
             vs->instruction_states[0].regs->state_flags[i] = 0;
