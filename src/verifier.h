@@ -193,6 +193,13 @@ struct verify_state
     instruction_state_t* instruction_states;
 
     /**
+     * A block of memory large enough for all the reg_state_t structures
+     * required for the verification of the prototype and all (possibly
+     * indirect) sub-prototypes.
+     */
+    unsigned char* reg_states;
+
+    /**
      * Head of a linked list of instructions which need to be traced before
      * verification can be finished.
      *
