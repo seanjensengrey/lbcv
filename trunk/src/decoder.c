@@ -21,7 +21,7 @@ SOFTWARE. */
 #include "decoder.h"
 #include "opcodes.h"
 #include <string.h>
-#if 0
+#if 1
 #define LUAI_MAXCCALLS 200
 #else
 #include <llimits.h> /* or any file which defines LUAI_MAXCCALLS */
@@ -47,7 +47,7 @@ SOFTWARE. */
  * @param len The number of bits to return after the discarded bits.
  * @return The specified range of bits, as an integer.
  */
-int extract_bits(unsigned char* bytes, int first, int len)
+static int extract_bits(unsigned char* bytes, int first, int len)
 {
     unsigned int result;
 
@@ -143,7 +143,7 @@ bool decode_instruction(decoded_prototype_t* proto, size_t index, int* op,
  * @return @c true if the specified number of bytes was read, @false if less
  *         than the specified number was read.
  */
-bool read(decode_state_t* ds, unsigned char* dest, size_t sz)
+static bool read(decode_state_t* ds, unsigned char* dest, size_t sz)
 {
     if(sz != 0)
     {
@@ -182,7 +182,7 @@ bool read(decode_state_t* ds, unsigned char* dest, size_t sz)
  * @return @c false if the value of the integer was too large to fit in 
  * a @c size_t. @c true otherwise.
  */
-bool parse_int(decode_state_t* ds, size_t* dest, size_t sz)
+static bool parse_int(decode_state_t* ds, size_t* dest, size_t sz)
 {
     size_t result = 0;
     if(!ds->swapendian && sz <= sizeof(size_t))
@@ -253,7 +253,7 @@ bool decode_header(decode_state_t* ds)
         return false;
     if(ds->sizesize > sizeof(ds->buffer))
         return false;
-
+   
     /* Check that the instruction size is large enough. */
     insbits = ds->sizeins * 8;
     if(POS_OP + SIZE_OP > insbits)
@@ -279,7 +279,7 @@ bool decode_header(decode_state_t* ds)
     return true;
 }
 
-decoded_prototype_t* alloc_proto(decode_state_t* ds)
+static decoded_prototype_t* alloc_proto(decode_state_t* ds)
 {
     decoded_prototype_t* proto = (decoded_prototype_t*)ds->alloc(ds->allocud,
         NULL, 0, sizeof(decoded_prototype_t));
@@ -332,7 +332,7 @@ void free_prototype(decoded_prototype_t* proto, lua_Alloc alloc, void* ud)
     alloc(ud, (void*)proto, sizeof(decoded_prototype_t), 0);
 }
 
-void byteswap(unsigned char* bytes, size_t n)
+static void byteswap(unsigned char* bytes, size_t n)
 {
     size_t i = 0;
     for(--n; i < n; ++i, --n)
@@ -386,24 +386,24 @@ decode_state_t* decode_bytecode_init(lua_Alloc alloc, void* allocud)
 
 #define READ(dest, len) \
     if(!read(ds, dest, len)) \
-        return ds->yieldpos = __LINE__, DECODE_YIELD; \
+        return (ds->yieldpos = __LINE__), DECODE_YIELD; \
     case __LINE__:
 
 #define READ_INT(dest, len) \
     if(!read(ds, ds->buffer, len)) \
-        return ds->yieldpos = __LINE__, DECODE_YIELD; \
+        return (ds->yieldpos = __LINE__), DECODE_YIELD; \
     case __LINE__: \
     if(!parse_int(ds, dest, len)) return DECODE_FAIL
 
 #define SKIP_STRING_1() \
     if(!read(ds, ds->buffer, ds->sizesize)) \
-        return ds->yieldpos = __LINE__, DECODE_YIELD; \
+        return (ds->yieldpos = __LINE__), DECODE_YIELD; \
     case __LINE__: \
     if(!parse_int(ds, &ds->readlen, ds->sizesize)) return DECODE_FAIL
 
 #define SKIP_STRING_2() \
     if(!read(ds, NULL, ds->readlen)) \
-        return ds->yieldpos = __LINE__, DECODE_YIELD; \
+        return (ds->yieldpos = __LINE__), DECODE_YIELD; \
     case __LINE__:
 
 #define i ds->i
@@ -411,13 +411,13 @@ decode_state_t* decode_bytecode_init(lua_Alloc alloc, void* allocud)
 int decode_bytecode_pump(decode_state_t* ds, const unsigned char* pData, size_t iLength)
 {
     decoded_prototype_t* proto;
-
+    
     /* Continue the read operation which caused the yield. */
     ds->chunk = pData;
     ds->chunklen = iLength;
     if(!read(ds, ds->readtarget, ds->readlen))
         return DECODE_YIELD;
-
+        
     proto = ds->stack[ds->level - 1];
 
     switch(ds->yieldpos)

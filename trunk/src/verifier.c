@@ -212,7 +212,7 @@ bool reg_state_usetop(reg_state_t* state, reg_index_t base)
  * @return The type code (eg. @c LUA_TNUMBER) of the register or constant
  *         referred to by @p rk, or @c LUA_TNONE if the type is not known.
  */
-int rk_type(verify_state_t* vs, reg_state_t* regs, int rk)
+static int rk_type(verify_state_t* vs, reg_state_t* regs, int rk)
 {
     if(ISK(rk))
     {
@@ -229,7 +229,7 @@ int rk_type(verify_state_t* vs, reg_state_t* regs, int rk)
     }
 }
 
-bool check_next_op(verify_state_t* vs, instruction_state_t* ins, int opcode, int* a)
+static bool check_next_op(verify_state_t* vs, instruction_state_t* ins, int opcode, int* a)
 {
     int op;
     int b;
@@ -248,7 +248,7 @@ bool check_next_op(verify_state_t* vs, instruction_state_t* ins, int opcode, int
 #define free_vector(mem, vs, typ, n) free_size(mem, vs, (n) * sizeof(typ))
 #define free_one(mem, vs, typ) free_vector(mem, vs, typ, 1)
 
-bool verify_next(verify_state_t* vs, instruction_state_t* ins, int offset)
+static bool verify_next(verify_state_t* vs, instruction_state_t* ins, int offset)
 {
     ++offset; /* make relative to ins, rather than next-pc */
 
@@ -303,23 +303,23 @@ bool verify_next(verify_state_t* vs, instruction_state_t* ins, int offset)
     return true;
 }
 
-bool is_reg_valid(verify_state_t* vs, int reg)
+static bool is_reg_valid(verify_state_t* vs, int reg)
 {
     return reg >= 0 && (unsigned int)reg < vs->prototype->numregs;
 }
 
-bool is_k_valid(verify_state_t* vs, int k)
+static bool is_k_valid(verify_state_t* vs, int k)
 {
     return k >= 0 && (size_t)k < vs->prototype->numconstants;
 }
 
-bool is_upvalue_valid(verify_state_t* vs, int upvalue)
+static bool is_upvalue_valid(verify_state_t* vs, int upvalue)
 {
     return upvalue >= 0 && (size_t)upvalue < vs->prototype->numupvalues;
 }
 
-bool verify_static(verify_state_t* vs, instruction_state_t* ins, int op, int a,
-                   int b, int c)
+static bool verify_static(verify_state_t* vs, instruction_state_t* ins, int op,
+                          int a, int b, int c)
 {
     if(op < 0 || op >= NUM_OPCODES)
         return false;
@@ -351,6 +351,9 @@ bool verify_static(verify_state_t* vs, instruction_state_t* ins, int op, int a,
         if(getOpMode(op) != iAsBx && !is_reg_valid(vs, b))
             return false;
         break;
+        
+    default:
+        break;
     }
     switch(getCMode(op))
     {
@@ -366,6 +369,9 @@ bool verify_static(verify_state_t* vs, instruction_state_t* ins, int op, int a,
     case OpArgR:
         if(!is_reg_valid(vs, c))
             return false;
+        break;
+        
+    default:
         break;
     }
     switch(op)
@@ -522,8 +528,8 @@ OP_VARARG_fallthrough:
     return true;
 }
 
-bool simulate_instruction(verify_state_t* vs, instruction_state_t* ins, int op,
-                          int a, int b, int c)
+static bool simulate_instruction(verify_state_t* vs, instruction_state_t* ins,
+                                 int op, int a, int b, int c)
 {
     reg_state_copy(vs, &vs->next_regs, ins->regs);
     /* A debug hook could have fired after the prior instruction, causing
@@ -757,8 +763,8 @@ OP_TAILCALL_fallthrough:
     return true;
 }
 
-bool schedule_next(verify_state_t* vs, instruction_state_t* ins, int op, int a,
-                   int b, int c)
+static bool schedule_next(verify_state_t* vs, instruction_state_t* ins, int op,
+                          int a, int b, int c)
 {
     switch(op)
     {
@@ -808,7 +814,7 @@ next_default_fallthrough:
     return true;
 }
 
-bool verify_step(verify_state_t* vs)
+static bool verify_step(verify_state_t* vs)
 {
     int op, a, b, c;
     instruction_state_t* ins = vs->next_to_trace;
@@ -830,7 +836,8 @@ bool verify_step(verify_state_t* vs)
     return true;
 }
 
-void find_max_size(decoded_prototype_t* prototype, unsigned int* numregs, size_t* numinstructions)
+static void find_max_size(decoded_prototype_t* prototype,
+                          unsigned int* numregs, size_t* numinstructions)
 {
     size_t i;
     if(*numregs < prototype->numregs)
@@ -841,7 +848,8 @@ void find_max_size(decoded_prototype_t* prototype, unsigned int* numregs, size_t
         find_max_size(prototype->prototypes[i], numregs, numinstructions);
 }
 
-bool verify_prototype(verify_state_t* vs, decoded_prototype_t* prototype)
+static bool verify_prototype(verify_state_t* vs,
+                             decoded_prototype_t* prototype)
 {
     size_t i;
 
