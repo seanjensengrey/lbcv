@@ -1,0 +1,50 @@
+#------
+# lbcv makefile configuration
+#
+
+#------
+# Output file names
+#
+EXT=so
+LBCV_V=0.3
+LBCV_SO=lbcv.$(EXT).$(LBCV_V) 
+
+#------
+# Lua includes and libraries
+#
+#LUAINC=-I/usr/local/include/lua52
+#LUAINC=-I/usr/local/include/lua5.2
+#LUAINC=-Ilua-5.2.0/src
+
+#------
+# Top of your Lua installation
+# Relative paths will be inside the src tree
+#
+INSTALL_TOP_SHARE=/usr/local/share/lua/5.2
+INSTALL_TOP_LIB=/usr/local/lib/lua/5.2
+
+INSTALL_DATA=cp
+INSTALL_EXEC=cp
+
+#------
+# Compiler and linker settings
+# for Mac OS X
+#
+#CC=gcc
+#DEF= -DLUASOCKET_DEBUG -DUNIX_HAS_SUN_LEN
+#CFLAGS= $(LUAINC) $(DEF) -pedantic -Wall -O2 -fno-common
+#LDFLAGS=-bundle -undefined dynamic_lookup
+#LD=export MACOSX_DEPLOYMENT_TARGET="10.3"; gcc
+
+#------
+# Compiler and linker settings
+# for Linux
+CC=gcc
+DEF= 
+CFLAGS= $(LUAINC) $(DEF) -pedantic -Wall -O2 -fpic
+LDFLAGS=-O -shared -fpic
+LD=gcc 
+
+#------
+# End of makefile configuration
+#
