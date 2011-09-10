@@ -46,16 +46,23 @@ SOFTWARE. */
 #define DECODE_FAIL 1
 
 /**
+ * Return value from decode_bytecode_pump() indicating that decoding has
+ * encountered potentially malicious bytecode, and should not be supplied with
+ * further input.
+ */
+#define DECODE_UNSAFE 2
+
+/**
  * Return value from decode_bytecode_pump() indicating that an internal error
  * occurred during the decoding process.
  */
-#define DECODE_ERROR 2
+#define DECODE_ERROR 3
 
 /**
  * Return value from decode_bytecode_pump() indicating that insufficient memory
  * was available to perform the decoding process.
  */
-#define DECODE_ERROR_MEM 3
+#define DECODE_ERROR_MEM 4
 
 /**
  * Container for all the information on a function prototype which the verifier
@@ -178,6 +185,12 @@ struct decode_state
      * is big.
      */
     bool littleendian;
+    /**
+     * Indication of whether or not numbers are integers.
+     * If @c true, numbers are integers, and if @c false, they are floating
+     * point.
+     */
+    bool integralnum;
     /**
      * The number of bytes used to store an @c int in the bytecode stream.
      */
