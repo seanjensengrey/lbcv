@@ -376,20 +376,19 @@ static bool verify_static(verify_state_t* vs, instruction_state_t* ins, int op,
     }
     switch(op)
     {
-    case OP_LOADK:
-        if(b == 0)
+    case OP_LOADKX:
         {
             int k;
             if(!check_next_op(vs, ins, OP_EXTRAARG, &k))
                 return false;
             if(!is_k_valid(vs, k))
                 return false;
+            break;
         }
-        else
-        {
-            if(!is_k_valid(vs, b - 1))
-                return false;
-        }
+
+    case OP_LOADK:
+        if(!is_k_valid(vs, b))
+            return false;
         break;
 
     case OP_LOADBOOL:
@@ -398,9 +397,7 @@ static bool verify_static(verify_state_t* vs, instruction_state_t* ins, int op,
         break;
 
     case OP_LOADNIL:
-        if(!is_reg_valid(vs, b))
-            return false;
-        if(b < a)
+        if(is_reg_valid(vs, a + b))
             return false;
         break;
 
@@ -496,8 +493,8 @@ OP_VARARG_fallthrough:
         }
         break;
 
-    case OP_CLOSE:
-        if(!is_reg_valid(vs, a))
+    case OP_JMP:
+        if(a && !is_reg_valid(vs, a - 1))
             return false;
         break;
 
@@ -560,20 +557,19 @@ static bool simulate_instruction(verify_state_t* vs, instruction_state_t* ins,
             return false;
         break;
 
+    case OP_LOADKX:
+        decode_instruction(vs->prototype, 1 + (size_t)(ins -
+            vs->instruction_states), &c, &b, &c, &c);
+
     case OP_LOADK:
-        if(b == 0)
-        {
-            decode_instruction(vs->prototype, 1 + (size_t)(ins -
-                vs->instruction_states), &c, &b, &c, &c);
-            ++b;
-        }
         reg_state_assignment(&vs->next_regs, (reg_index_t)a,
-            vs->prototype->constant_types[b-1]);
+            vs->prototype->constant_types[b]);
         break;
 
     case OP_LOADNIL:
-        for(; b >= a; --b)
-            reg_state_assignment(&vs->next_regs, (reg_index_t)b, LUA_TNIL);
+        do {
+            reg_state_assignment(&vs->next_regs, (reg_index_t)(a + b), LUA_TNIL);
+        } while(b--);
         break;
 
     case OP_SETTABLE:
@@ -714,9 +710,12 @@ OP_TAILCALL_fallthrough:
         reg_state_settop(vs, &vs->next_regs, vs->prototype->numregs);
         break;
 
-    case OP_CLOSE:
-        for(; (size_t)a < vs->prototype->numregs; ++a)
-            reg_state_unsetopen(&vs->next_regs, (reg_index_t)a);
+    case OP_JMP:
+        if(a)
+        {
+            for(--a; (size_t)a < vs->prototype->numregs; ++a)
+                reg_state_unsetopen(&vs->next_regs, (reg_index_t)a);
+        }
         break;
 
     case OP_CLOSURE:

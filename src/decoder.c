@@ -253,6 +253,7 @@ bool decode_header(decode_state_t* ds)
         return false;
     if(ds->sizesize > sizeof(ds->buffer))
         return false;
+    ds->integralnum = p[7];
    
     /* Check that the instruction size is large enough. */
     insbits = ds->sizeins * 8;
@@ -344,6 +345,42 @@ static void byteswap(unsigned char* bytes, size_t n)
     }
 }
 
+static bool is_signalling_nan(decode_state_t* ds, unsigned char* number)
+{
+    if(ds->integralnum)
+        return false; /* NaNs don't exist in integers */
+
+    switch(ds->sizenum)
+    {
+    case 4:
+        if(ds->littleendian)
+        {
+            return (number[3] & 0x7F) == 0x7F
+                && (number[2] & 0xC0) == 0xC0;
+        }
+        else
+        {
+            return (number[0] & 0x7F) == 0x7F
+                && (number[1] & 0xC0) == 0xC0;
+        }
+    case 8:
+        if(ds->littleendian)
+        {
+            return (number[7] & 0x7F) == 0x7F
+                && (number[6] & 0xF8) == 0xF8;
+        }
+        else
+        {
+            return (number[0] & 0x7F) == 0x7F
+                && (number[1] & 0xF8) == 0xF8;
+        }
+    default:
+        /* We do not understand this size of floating point number, so
+           play it safe by saying that it is an SNaN. */
+        return true;
+    }
+}
+
 /**
  * Special value for decode_state::yieldpos indicating that the bytecode
  * header needs to be supplied and then subsequently decoded.
@@ -429,7 +466,7 @@ int decode_bytecode_pump(decode_state_t* ds, const unsigned char* pData, size_t 
         /* Main prototype decoding function */
 ENTER_CHILD_PROTO:
         if(ds->level >= LUAI_MAXCCALLS)
-            return DECODE_FAIL;
+            return DECODE_UNSAFE;
         proto = alloc_proto(ds);
         if(proto == NULL)
             return DECODE_ERROR_MEM;
@@ -446,7 +483,7 @@ ENTER_CHILD_PROTO:
         proto->instructionsize = ds->sizeins;
         READ_INT(&proto->numinstructions, ds->sizeint);
         if(proto->numinstructions == 0)
-            return DECODE_FAIL;
+            return DECODE_UNSAFE;
         proto->code = (unsigned char*)ds->alloc(ds->allocud, NULL, 0,
             ds->sizeins * proto->numinstructions + sizeof(int));
         if(proto->code == NULL)
@@ -478,13 +515,15 @@ ENTER_CHILD_PROTO:
             }
             else if(t == LUA_TNUMBER)
             {
-                READ(NULL, ds->sizenum);
+                READ(ds->buffer, ds->sizenum);
+                if(is_signalling_nan(ds, ds->buffer))
+                    return DECODE_UNSAFE;
             }
             else if(t == LUA_TBOOLEAN)
             {
                 READ(ds->buffer, 1);
                 if(ds->buffer[0] > 1)
-                    return DECODE_FAIL;
+                    return DECODE_UNSAFE;
             }
             else if(t != LUA_TNIL)
             {
@@ -552,7 +591,7 @@ RESUME_PARENT_PROTO:
 
         if(--ds->level == 0)
         {
-            if(ds->chunklen != 0)
+            if(ds->chunklen != 0) /* Data in epilogue? */
                 return DECODE_FAIL;
             ds->yieldpos = DECODE_YIELDPOS_DONE;
             return DECODE_YIELD;

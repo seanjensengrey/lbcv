@@ -132,9 +132,10 @@ typedef enum {
 name		args	description
 ------------------------------------------------------------------------*/
 OP_MOVE,/*	A B	R(A) := R(B)					*/
-OP_LOADK,/*	A Bx	R(A) := Kst(Bx - 1)				*/
+OP_LOADK,/*	A Bx	R(A) := Kst(Bx)					*/
+OP_LOADKX,/*	A 	R(A) := Kst(extra arg)				*/
 OP_LOADBOOL,/*	A B C	R(A) := (Bool)B; if (C) pc++			*/
-OP_LOADNIL,/*	A B	R(A) := ... := R(B) := nil			*/
+OP_LOADNIL,/*	A B	R(A), R(A+1), ..., R(A+B) := nil		*/
 OP_GETUPVAL,/*	A B	R(A) := UpValue[B]				*/
 
 OP_GETTABUP,/*	A B C	R(A) := UpValue[B][RK(C)]			*/
@@ -160,7 +161,7 @@ OP_LEN,/*	A B	R(A) := length of R(B)				*/
 
 OP_CONCAT,/*	A B C	R(A) := R(B).. ... ..R(C)			*/
 
-OP_JMP,/*	sBx	pc+=sBx					*/
+OP_JMP,/*	A sBx	pc+=sBx; if (A) close all upvalues >= R(A) + 1	*/ 
 
 OP_EQ,/*	A B C	if ((RK(B) == RK(C)) ~= A) then pc++		*/
 OP_LT,/*	A B C	if ((RK(B) <  RK(C)) ~= A) then pc++		*/
@@ -182,7 +183,6 @@ OP_TFORLOOP,/*	A sBx	if R(A+1) ~= nil then { R(A)=R(A+1); pc += sBx }*/
 
 OP_SETLIST,/*	A B C	R(A)[(C-1)*FPF+i] := R(A+i), 1 <= i <= B	*/
 
-OP_CLOSE,/*	A	close all variables in the stack up to (>=) R(A)*/
 OP_CLOSURE,/*	A Bx	R(A) := closure(KPROTO[Bx])			*/
 
 OP_VARARG,/*	A B	R(A), R(A+1), ..., R(A+B-2) = vararg		*/
@@ -209,7 +209,7 @@ OP_EXTRAARG/*	Ax	extra (larger) argument for previous opcode	*/
   (*) In OP_SETLIST, if (B == 0) then B = `top'; if (C == 0) then next
   'instruction' is EXTRAARG(real C).
 
-  (*) In OP_LOADK, if (Bx == 0) then next 'instruction' is EXTRAARG(real Bx).
+  (*) In OP_LOADKX, the next 'instruction' is always EXTRAARG.
 
   (*) For comparisons, A specifies what condition the test should accept
   (true or false).

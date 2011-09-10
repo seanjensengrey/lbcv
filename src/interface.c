@@ -51,6 +51,10 @@ static int decode_fail(lua_State* L, int status)
     lua_pushnil(L);
     switch(status)
     {
+    case DECODE_UNSAFE:
+        lua_pushliteral(L, "verification failed during decode");
+        break;
+
     case DECODE_ERROR:
         lua_pushliteral(L, "unknown decoding error");
         break;
@@ -173,7 +177,7 @@ static const char *checkrights(lua_State *L, const char *mode, const char *s)
     return NULL;  /* chunk in allowed format */
 }
 
-#define RESERVEDSLOT 4
+#define RESERVEDSLOT 5
 
 /*
 ** Reader for generic `load' function: `lua_load' uses the
@@ -258,6 +262,7 @@ static int l_load(lua_State *L)
     void* allocud;
     lua_Alloc alloc = lua_getallocf(L, &allocud);
     int status;
+    int top = lua_gettop(L);
     stat.f = 1;
     stat.mode = luaL_optstring(L, 3, "bt");
     stat.ds = NULL;
@@ -299,9 +304,13 @@ static int l_load(lua_State *L)
         /* Do the actual loading. */
         status = luaL_loadbuffer(L, str, len, chunkname);
     }
-    if (status == LUA_OK)
+    if (status == LUA_OK) {
+        if (top >= 4) {  /* is there an 'env' argument */
+            lua_pushvalue(L, 4);  /* environment for loaded function */
+            lua_setupvalue(L, -2, 1);  /* set it as 1st upvalue */
+        }
         return 1;
-    else {
+    } else {
         lua_pushnil(L);
         lua_insert(L, -2);  /* put before error message */
         return 2;  /* return nil plus error message */
